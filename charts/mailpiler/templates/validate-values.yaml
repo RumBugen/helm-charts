@@ -1,0 +1,7 @@
+{{- if eq (.Values.service.type | default "ClusterIP") "NodePort" -}}
+{{- fail "mailpiler: service.type=NodePort is not supported in this chart; use ClusterIP/LoadBalancer (or enable smtpService for SMTP-only LoadBalancer)." -}}
+{{- end -}}
+
+{{- if and .Values.smtpService.enabled (eq (.Values.smtpService.type | default "LoadBalancer") "NodePort") -}}
+{{- fail "mailpiler: smtpService.type=NodePort is not supported; use LoadBalancer (MetalLB/cloud) for SMTP exposure." -}}
+{{- end -}}

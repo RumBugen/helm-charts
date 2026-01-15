@@ -1,0 +1,27 @@
+{{- if .Values.manticoresearch.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mailpiler.manticore.serviceName" . }}
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manticore
+spec:
+  type: ClusterIP
+  ports:
+    - name: mysql
+      port: 9306
+      targetPort: 9306
+      protocol: TCP
+    - name: mysql-readonly
+      port: 9307
+      targetPort: 9306
+      protocol: TCP
+  selector:
+    # Mailpiler performs INSERT/REPLACE queries for RT indexing, so it must connect to a write-capable endpoint.
+    # The manticoresearch "balancer" exposes distributed tables which are not writable by default.
+    # Point Mailpiler directly at the workers; the balancer can still be enabled for other clients.
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ default "manticoresearch" .Values.manticoresearch.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}

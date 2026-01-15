@@ -1,0 +1,18 @@
+{{- if and .Values.persistence.store.enabled (not .Values.persistence.store.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mailpiler.storeClaimName" . }}
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpiler
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.store.accessModes | nindent 4 }}
+  {{- if .Values.persistence.store.storageClass }}
+  storageClassName: {{ .Values.persistence.store.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.store.size }}
+{{- end }}

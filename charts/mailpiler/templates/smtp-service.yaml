@@ -1,0 +1,33 @@
+{{- if .Values.smtpService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mailpiler.smtpServiceName" . }}
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smtp
+  {{- with .Values.smtpService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.smtpService.type }}
+  {{- if .Values.smtpService.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.smtpService.externalTrafficPolicy }}
+  {{- end }}
+  {{- if and (eq .Values.smtpService.type "LoadBalancer") .Values.smtpService.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.smtpService.loadBalancerIP }}
+  {{- end }}
+  {{- with .Values.smtpService.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  ports:
+    - name: smtp
+      port: {{ .Values.smtpService.port }}
+      targetPort: smtp
+      protocol: TCP
+  selector:
+    {{- include "mailpiler.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpiler
+{{- end }}

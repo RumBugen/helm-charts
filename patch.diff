@@ -1,0 +1,1903 @@
+From 38e10d96e9b68469778c497de27aac2919c11beb Mon Sep 17 00:00:00 2001
+From: RumBugen <vladislavwanner@gmail.com>
+Date: Thu, 15 Jan 2026 21:25:25 +0100
+Subject: [PATCH] feat: add mailpiler and init
+
+---
+ .github/workflows/release.yml                 | 167 ++++++++++++
+ .gitignore                                    |   6 +
+ COSIGN.md                                     |  27 ++
+ LICENSE                                       | 177 +++++++++++++
+ NOTICE                                        |  13 +
+ README.md                                     |  44 ++++
+ charts/mailpiler/.helmignore                  |  23 ++
+ charts/mailpiler/Chart.yaml                   |  20 ++
+ charts/mailpiler/README.md                    | 135 ++++++++++
+ charts/mailpiler/templates/NOTES.txt          |  29 +++
+ charts/mailpiler/templates/_helpers.tpl       | 213 ++++++++++++++++
+ charts/mailpiler/templates/db-secret.yaml     |  12 +
+ charts/mailpiler/templates/deployment.yaml    | 139 ++++++++++
+ charts/mailpiler/templates/httproute.yaml     |  39 +++
+ charts/mailpiler/templates/ingress.yaml       |  44 ++++
+ .../templates/manticore-init-job.yaml         |  68 +++++
+ .../manticore-mailpiler-service.yaml          |  27 ++
+ charts/mailpiler/templates/pvc-config.yaml    |  18 ++
+ charts/mailpiler/templates/pvc-store.yaml     |  18 ++
+ charts/mailpiler/templates/service.yaml       |  36 +++
+ .../mailpiler/templates/serviceaccount.yaml   |  14 +
+ charts/mailpiler/templates/smtp-service.yaml  |  33 +++
+ .../tests/test-manticore-tables.yaml          |  30 +++
+ .../mailpiler/templates/tests/test-stack.yaml |  69 +++++
+ .../mailpiler/templates/validate-values.yaml  |   7 +
+ charts/mailpiler/values.yaml                  | 239 ++++++++++++++++++
+ cosign.pub                                    |   4 +
+ 27 files changed, 1651 insertions(+)
+ create mode 100644 .github/workflows/release.yml
+ create mode 100644 .gitignore
+ create mode 100644 COSIGN.md
+ create mode 100644 LICENSE
+ create mode 100644 NOTICE
+ create mode 100644 README.md
+ create mode 100644 charts/mailpiler/.helmignore
+ create mode 100644 charts/mailpiler/Chart.yaml
+ create mode 100644 charts/mailpiler/README.md
+ create mode 100644 charts/mailpiler/templates/NOTES.txt
+ create mode 100644 charts/mailpiler/templates/_helpers.tpl
+ create mode 100644 charts/mailpiler/templates/db-secret.yaml
+ create mode 100644 charts/mailpiler/templates/deployment.yaml
+ create mode 100644 charts/mailpiler/templates/httproute.yaml
+ create mode 100644 charts/mailpiler/templates/ingress.yaml
+ create mode 100644 charts/mailpiler/templates/manticore-init-job.yaml
+ create mode 100644 charts/mailpiler/templates/manticore-mailpiler-service.yaml
+ create mode 100644 charts/mailpiler/templates/pvc-config.yaml
+ create mode 100644 charts/mailpiler/templates/pvc-store.yaml
+ create mode 100644 charts/mailpiler/templates/service.yaml
+ create mode 100644 charts/mailpiler/templates/serviceaccount.yaml
+ create mode 100644 charts/mailpiler/templates/smtp-service.yaml
+ create mode 100644 charts/mailpiler/templates/tests/test-manticore-tables.yaml
+ create mode 100644 charts/mailpiler/templates/tests/test-stack.yaml
+ create mode 100644 charts/mailpiler/templates/validate-values.yaml
+ create mode 100644 charts/mailpiler/values.yaml
+ create mode 100644 cosign.pub
+
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+new file mode 100644
+index 0000000..47f1981
+--- /dev/null
++++ b/.github/workflows/release.yml
+@@ -0,0 +1,167 @@
++name: Release Charts
++
++on:
++  push:
++    branches:
++      - main
++  workflow_dispatch:
++
++concurrency:
++  group: release
++  cancel-in-progress: false
++
++permissions:
++  contents: write # GitHub Releases + gh-pages
++  packages: write # GHCR (OCI)
++
++env:
++  DOCKERHUB_REGISTRY: registry-1.docker.io
++  GHCR_REGISTRY: ghcr.io
++
++jobs:
++  release:
++    runs-on: ubuntu-latest
++    timeout-minutes: 20
++    steps:
++      - name: Checkout
++        uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++
++      - name: Configure Git
++        run: |
++          git config user.name "$GITHUB_ACTOR"
++          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
++
++      - name: Set up Helm
++        uses: azure/setup-helm@v4
++
++      - name: Install cosign
++        uses: sigstore/cosign-installer@v3.10.0
++
++      - name: Update chart dependencies
++        shell: bash
++        run: |
++          set -euo pipefail
++          for chart_dir in charts/*; do
++            if [[ -f "${chart_dir}/Chart.yaml" ]]; then
++              helm dependency update "${chart_dir}"
++            fi
++          done
++
++      - name: Run chart-releaser
++        id: cr
++        uses: helm/chart-releaser-action@v1.7.0
++        with:
++          charts_dir: charts
++          skip_existing: true
++        env:
++          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
++
++      - name: Login to GHCR (Helm OCI)
++        if: steps.cr.outputs.changed_charts != ''
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.GHCR_REGISTRY }}
++          username: ${{ github.actor }}
++          password: ${{ secrets.GITHUB_TOKEN }}
++
++      - name: Login to Docker Hub (Helm OCI)
++        if: steps.cr.outputs.changed_charts != ''
++        uses: docker/login-action@v3
++        with:
++          registry: ${{ env.DOCKERHUB_REGISTRY }}
++          username: ${{ vars.DOCKERHUB_USERNAME }}
++          password: ${{ secrets.DOCKERHUB_TOKEN }}
++
++      - name: Push charts to OCI registries and sign (cosign)
++        if: steps.cr.outputs.changed_charts != ''
++        shell: bash
++        env:
++          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
++          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
++        run: |
++          set -euo pipefail
++
++          if [[ -z "${COSIGN_PRIVATE_KEY:-}" ]]; then
++            echo "COSIGN_PRIVATE_KEY secret is missing."
++            exit 1
++          fi
++          if [[ -z "${COSIGN_PASSWORD:-}" ]]; then
++            echo "COSIGN_PASSWORD secret is missing."
++            exit 1
++          fi
++
++          printf '%s' "${COSIGN_PRIVATE_KEY}" > cosign.key
++          chmod 0600 cosign.key
++
++          owner="${{ github.repository_owner }}"
++          owner="${owner,,}"
++          dockerhub_username="${{ vars.DOCKERHUB_USERNAME }}"
++          dockerhub_username="${dockerhub_username,,}"
++          if [[ -z "${dockerhub_username}" ]]; then
++            echo "Repository variable DOCKERHUB_USERNAME is empty."
++            exit 1
++          fi
++
++          echo "Logging in Helm registries..."
++          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | helm registry login "${GHCR_REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
++          printf '%s' "${{ secrets.DOCKERHUB_TOKEN }}" | helm registry login "${DOCKERHUB_REGISTRY}" -u "${dockerhub_username}" --password-stdin
++
++          push_and_sign() {
++            local registry="$1"
++            local namespace="$2"
++            local chart="$3"
++            local version="$4"
++            local pkg="$5"
++
++            local repo_ref="${registry}/${namespace}/${chart}:${version}"
++            local push_out push_status
++
++            set +e
++            push_out="$(helm push "${pkg}" "oci://${registry}/${namespace}" 2>&1)"
++            push_status=$?
++            set -e
++
++            echo "${push_out}"
++            if [[ ${push_status} -ne 0 ]]; then
++              echo "helm push failed for ${repo_ref}"
++              return "${push_status}"
++            fi
++
++            local digest
++            digest="$(echo "${push_out}" | grep -Eo 'sha256:[a-f0-9]+' | tail -n 1 || true)"
++            if [[ -z "${digest}" ]]; then
++              echo "Failed to parse digest from helm push output for ${repo_ref}"
++              return 1
++            fi
++
++            cosign sign -y --key cosign.key "${registry}/${namespace}/${chart}@${digest}"
++          }
++
++          changed="${{ steps.cr.outputs.changed_charts }}"
++          while IFS= read -r item; do
++            item="$(echo "${item}" | xargs)"
++            [[ -z "${item}" ]] && continue
++
++            chart="${item##*/}"
++            chart="${chart#charts/}"
++            chart_dir="charts/${chart}"
++
++            if [[ ! -f "${chart_dir}/Chart.yaml" ]]; then
++              echo "Chart directory '${chart_dir}' does not exist or has no Chart.yaml"
++              exit 1
++            fi
++
++            version="$(awk -F: '$1=="version"{gsub(/^[ \t]+|[ \t]+$/,"",$2); gsub(/"/,"",$2); print $2; exit}' "${chart_dir}/Chart.yaml")"
++            pkg=".cr-release-packages/${chart}-${version}.tgz"
++
++            if [[ ! -f "${pkg}" ]]; then
++              echo "Package not found: ${pkg}"
++              ls -la .cr-release-packages || true
++              exit 1
++            fi
++
++            push_and_sign "${GHCR_REGISTRY}" "${owner}" "${chart}" "${version}" "${pkg}"
++            push_and_sign "${DOCKERHUB_REGISTRY}" "${dockerhub_username}" "${chart}" "${version}" "${pkg}"
++          done < <(printf '%s\n' "${changed}" | tr ',' '\n')
+\ No newline at end of file
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..f7dba01
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,6 @@
++# Helm dependency archives
++charts/**/charts/
++charts/**/Chart.lock
++
++# Development
++development/
+\ No newline at end of file
+diff --git a/COSIGN.md b/COSIGN.md
+new file mode 100644
+index 0000000..4dc0316
+--- /dev/null
++++ b/COSIGN.md
+@@ -0,0 +1,27 @@
++# Cosign signature verification
++
++This repository publishes Helm charts as OCI artifacts to:
++
++- Docker Hub: `registry-1.docker.io/rumbugen/<chart>:<version>`
++- GHCR: `ghcr.io/rumbugen/<chart>:<version>`
++
++All OCI-published charts are signed with Cosign. Verify signatures before installing charts from OCI.
++
++## Public key
++
++The public key is stored in this repository as `cosign.pub`.
++
++## Verify a chart
++
++Example for Mailpiler `0.1.0`:
++
++```bash
++# GHCR
++cosign verify --key cosign.pub ghcr.io/rumbugen/mailpiler:0.1.0
++
++# Docker Hub
++cosign verify --key cosign.pub registry-1.docker.io/rumbugen/mailpiler:0.1.0
++
++# Install after verification
++helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.0
++```
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..4947287
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,177 @@
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
+\ No newline at end of file
+diff --git a/NOTICE b/NOTICE
+new file mode 100644
+index 0000000..cd320bd
+--- /dev/null
++++ b/NOTICE
+@@ -0,0 +1,13 @@
++Copyright 2026 Vladislav Wanner
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
+\ No newline at end of file
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..33b7ebf
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,44 @@
++# Helm Charts
++
++This repository publishes Helm charts via:
++
++- **GitHub Pages**
++- **OCI registries** (Docker Hub + GHCR)
++
++## Usage
++
++### OCI (Docker Hub / GHCR)
++
++```bash
++# GHCR
++helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.0
++
++# Docker Hub
++helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.0
++```
++
++### GitHub Pages repo
++
++```bash
++helm repo add charts https://rumbugen.github.io/helm-charts/
++helm repo update
++helm search repo charts
++helm install mailpiler charts/mailpiler --set mailpiler.hostname=archive.example.com
++```
++
++## Charts
++
++- `charts/mailpiler`: Mailpiler with official Manticore chart; MariaDB and Memcached as CloudPirates dependencies.
++
++## Signed commits
++
++All commits in this repository should be GPG- or SSH-signed. Enable commit signing locally before pushing.
++
++Enforcement is typically done via GitHub branch protection (“Require signed commits”) and the `Check signed commits` GitHub Action.
++
++## Chart signatures (Cosign)
++
++OCI-published charts are signed with Cosign. See `COSIGN.md` for verification instructions.
++
++## License
++Licensed under the Apache License, Version 2.0. See the LICENSE file.
+\ No newline at end of file
+diff --git a/charts/mailpiler/.helmignore b/charts/mailpiler/.helmignore
+new file mode 100644
+index 0000000..691fa13
+--- /dev/null
++++ b/charts/mailpiler/.helmignore
+@@ -0,0 +1,23 @@
++# Patterns to ignore when building packages.
++# This supports shell glob matching, relative path matching, and
++# negation (prefixed with !). Only one pattern per line.
++.DS_Store
++# Common VCS dirs
++.git/
++.gitignore
++.bzr/
++.bzrignore
++.hg/
++.hgignore
++.svn/
++# Common backup files
++*.swp
++*.bak
++*.tmp
++*.orig
++*~
++# Various IDEs
++.project
++.idea/
++*.tmproj
++.vscode/
+\ No newline at end of file
+diff --git a/charts/mailpiler/Chart.yaml b/charts/mailpiler/Chart.yaml
+new file mode 100644
+index 0000000..2044759
+--- /dev/null
++++ b/charts/mailpiler/Chart.yaml
+@@ -0,0 +1,20 @@
++apiVersion: v2
++name: mailpiler
++description: Mailpiler is a powerful, scalable email archiving platform that helps organizations comply with regulations, reduce storage costs, and improve email management. 
++type: application
++version: 0.1.0
++appVersion: "1.4.8"
++
++dependencies:
++  - name: mariadb
++    version: 0.10.1
++    repository: https://cloudpirates-io.github.io/helm-charts
++    condition: mariadb.enabled
++  - name: memcached
++    version: 0.8.2
++    repository: https://cloudpirates-io.github.io/helm-charts
++    condition: memcached.enabled
++  - name: manticoresearch
++    version: 15.1.0
++    repository: https://manticoresoftware.github.io/manticoresearch-helm
++    condition: manticoresearch.enabled
+\ No newline at end of file
+diff --git a/charts/mailpiler/README.md b/charts/mailpiler/README.md
+new file mode 100644
+index 0000000..f684131
+--- /dev/null
++++ b/charts/mailpiler/README.md
+@@ -0,0 +1,135 @@
++# Mailpiler
++
++This chart deploys Mailpiler for Kubernetes. MariaDB and Memcached are installed by default as dependencies from the CloudPirates Helm repo. Manticore is deployed via the official `manticoresearch` Helm chart.
++
++## Install
++
++### OCI (GHCR / Docker Hub)
++
++Verify the signature first (recommended): see `COSIGN.md`.
++
++```bash
++# GHCR
++helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.0 \
++  --set mailpiler.hostname=archive.example.com
++
++# Docker Hub
++helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.0 \
++  --set mailpiler.hostname=archive.example.com
++```
++
++### GitHub Pages repo
++
++```bash
++helm repo add charts https://rumbugen.github.io/helm-charts/
++helm repo update
++helm install mailpiler charts/mailpiler \
++  --set mailpiler.hostname=archive.example.com
++```
++
++## Components
++
++- **Mailpiler**: SMTP + Web UI (ports 25/80/443)
++- **MariaDB**: via CloudPirates dependency (`mariadb.enabled=true`)
++- **Manticore**: via `manticoresearch` dependency (full-text index)
++- **Memcached**: via CloudPirates dependency (`memcached.enabled=true`)
++
++## Key values
++
++- `mailpiler.hostname`: public hostname for Mailpiler
++- `mailpiler.rtIndex`: enable RT index (1/0)
++- `mailpiler.pathPrefix`: optional URL prefix (trailing `/` is optional)
++- `persistence.config` / `persistence.store`: PVCs for `/etc/piler` and `/var/piler/store`
++- `service.type`: `ClusterIP` (default) or `LoadBalancer`
++- `service.ports.smtp/http/https`: service ports (you can expose SMTP on a non-25 port)
++- `manticoresearch.worker.replicaCount`: number of Manticore worker pods (default: 1)
++- `manticoresearch.balancer.enabled`: enable the Manticore balancer (default: true)
++- `manticoreInit.enabled`: create required Mailpiler RT tables (`piler1`, `tag1`, `note1`, `audit1`) after install/upgrade
++- `memcached.config.memoryLimit`: cache size in MB (dependency)
++- `mariadb.auth.database` / `mariadb.auth.username`: database + user for Mailpiler
++- `mariadb.auth.password`: optional, otherwise a random password is generated in the Secret
++
++## Default credentials
++
++Mailpiler ships with a built-in admin account. It is strongly recommended to change this password on first install.
++
++- Username: `admin@local`
++- Password: `pilerrocks`
++
++To set a new password, provide `mailpiler.adminUserPasswordHash` (a `crypt()` hash). The built-in default uses **MD5-crypt** (hash prefix `$1$`), but it is recommended to use a stronger scheme like **SHA512-crypt** (hash prefix `$6$`):
++
++```bash
++openssl passwd -6 'YourNewPassword'
++```
++
++## Manticore connection
++
++The Mailpiler container expects Manticore on:
++
++- `SPHINX_HOSTNAME`: `<host>:9306`
++- `SPHINX_HOSTNAME_READONLY`: `<host>:9307`
++
++The chart creates a small Service (`<release>-manticore`, for example `mailpiler-manticore`) that exposes **both** ports and routes them to the **Manticore workers**.
++
++This is important: Mailpiler performs `REPLACE INTO ...` statements for RT indexing, and the `manticoresearch` chart's **balancer** exposes *distributed* tables which are not writable by default. Connecting Mailpiler to the workers avoids errors like `table 'piler1' does not support INSERT`.
++
++## Exposing SMTP on a different port
++
++Mailpiler listens on port **25** inside the pod, but you can expose it on a different Kubernetes Service port (useful when sending from an external mail system like Mailcow):
++
++```bash
++helm upgrade --install mailpiler charts/mailpiler \
++  --set service.type=LoadBalancer \
++  --set service.ports.smtp=2525
++```
++
++## Expose only SMTP via LoadBalancer (MetalLB)
++
++If you want the web UI to stay on `Ingress` (Traefik/nginx/etc.) but expose **only SMTP** externally, enable the dedicated SMTP Service:
++
++```bash
++helm upgrade --install mailpiler charts/mailpiler \
++  --set service.type=ClusterIP \
++  --set service.expose.smtp=false \
++  --set smtpService.enabled=true \
++  --set smtpService.type=LoadBalancer \
++  --set smtpService.port=25
++```
++
++## Exposure options
++
++- **Web UI**: prefer `ingress.enabled=true` (Ingress controller required) or `httpRoute.enabled=true` (Gateway API required).
++- **SMTP ingest**: prefer `service.type=LoadBalancer` so it is reachable outside the cluster (MetalLB / cloud LB).
++  - You can expose SMTP on a non-25 port using `service.ports.smtp` (Mailpiler still listens on 25 inside the pod).
++
++## External MariaDB
++
++```bash
++helm install mailpiler charts/mailpiler \
++  --set mariadb.enabled=false \
++  --set database.host=my-db.example.com \
++  --set database.name=piler \
++  --set database.user=piler \
++  --set database.password=...
++```
++
++Alternatively, set `database.existingSecret` (key via `database.passwordKey`).
++
++## External Memcached
++
++```bash
++helm install mailpiler charts/mailpiler \
++  --set memcached.enabled=false \
++  --set memcached.host=my-memcached.example.com
++```
++
++## MariaDB dependency Secrets
++
++If you set `mariadb.auth.existingSecret`, the Secret must contain the key defined in `mariadb.auth.secretKeys.userPasswordKey`. Mailpiler reads that Secret directly.
++
++## Helm tests
++
++`helm test` validates:
++
++- Ports (Mailpiler, MariaDB/Memcached/Manticore as enabled)
++- Manticore tables exist (`piler1`, `tag1`, `note1`, `audit1`)
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/NOTES.txt b/charts/mailpiler/templates/NOTES.txt
+new file mode 100644
+index 0000000..fa1dc23
+--- /dev/null
++++ b/charts/mailpiler/templates/NOTES.txt
+@@ -0,0 +1,29 @@
++1. Get the application URL by running these commands:
++{{- if .Values.httpRoute.enabled }}
++{{- if .Values.httpRoute.hostnames }}
++    export APP_HOSTNAME={{ .Values.httpRoute.hostnames | first }}
++{{- else }}
++    export APP_HOSTNAME=$(kubectl get --namespace {{(first .Values.httpRoute.parentRefs).namespace | default .Release.Namespace }} gateway/{{ (first .Values.httpRoute.parentRefs).name }} -o jsonpath="{.spec.listeners[0].hostname}")
++  {{- end }}
++{{- if and .Values.httpRoute.rules (first .Values.httpRoute.rules).matches (first (first .Values.httpRoute.rules).matches).path.value }}
++    echo "Visit http://$APP_HOSTNAME{{ (first (first .Values.httpRoute.rules).matches).path.value }} to use your application"
++
++    NOTE: Your HTTPRoute depends on the listener configuration of your gateway and your HTTPRoute rules.
++    The rules can be set for path, method, header and query parameters.
++    You can check the gateway configuration with 'kubectl get --namespace {{(first .Values.httpRoute.parentRefs).namespace | default .Release.Namespace }} gateway/{{ (first .Values.httpRoute.parentRefs).name }} -o yaml'
++{{- end }}
++{{- else if .Values.ingress.enabled }}
++{{- range $host := .Values.ingress.hosts }}
++  {{- range .paths }}
++  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
++  {{- end }}
++{{- end }}
++{{- else if contains "LoadBalancer" .Values.service.type }}
++     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
++           You can watch its status by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "mailpiler.fullname" . }}'
++  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "mailpiler.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
++  echo http://$SERVICE_IP:{{ .Values.service.ports.http }}
++{{- else if contains "ClusterIP" .Values.service.type }}
++  echo "Visit http://127.0.0.1:8080 to use your application"
++  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "mailpiler.fullname" . }} 8080:{{ .Values.service.ports.http }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/_helpers.tpl b/charts/mailpiler/templates/_helpers.tpl
+new file mode 100644
+index 0000000..cc2415b
+--- /dev/null
++++ b/charts/mailpiler/templates/_helpers.tpl
+@@ -0,0 +1,213 @@
++{{/*
++Expand the name of the chart.
++*/}}
++{{- define "mailpiler.name" -}}
++{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
++{{- end }}
++
++{{/*
++Create a default fully qualified app name.
++We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
++If release name contains chart name it will be used as a full name.
++*/}}
++{{- define "mailpiler.fullname" -}}
++{{- if .Values.fullnameOverride }}
++{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
++{{- else }}
++{{- $name := default .Chart.Name .Values.nameOverride }}
++{{- if contains $name .Release.Name }}
++{{- .Release.Name | trunc 63 | trimSuffix "-" }}
++{{- else }}
++{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
++{{- end }}
++{{- end }}
++{{- end }}
++
++{{/*
++Create chart name and version as used by the chart label.
++*/}}
++{{- define "mailpiler.chart" -}}
++{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
++{{- end }}
++
++{{/*
++Common labels
++*/}}
++{{- define "mailpiler.labels" -}}
++helm.sh/chart: {{ include "mailpiler.chart" . }}
++{{ include "mailpiler.selectorLabels" . }}
++{{- if .Chart.AppVersion }}
++app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
++{{- end }}
++app.kubernetes.io/managed-by: {{ .Release.Service }}
++{{- end }}
++
++{{/*
++Selector labels
++*/}}
++{{- define "mailpiler.selectorLabels" -}}
++app.kubernetes.io/name: {{ include "mailpiler.name" . }}
++app.kubernetes.io/instance: {{ .Release.Name }}
++{{- end }}
++
++{{/*
++Create the name of the service account to use
++*/}}
++{{- define "mailpiler.serviceAccountName" -}}
++{{- if .Values.serviceAccount.create }}
++{{- default (include "mailpiler.fullname" .) .Values.serviceAccount.name }}
++{{- else }}
++{{- default "default" .Values.serviceAccount.name }}
++{{- end }}
++{{- end }}
++
++{{- define "mailpiler.databaseSecretName" -}}
++{{- if .Values.mariadb.enabled -}}
++  {{- if .Values.mariadb.auth.existingSecret -}}
++{{- .Values.mariadb.auth.existingSecret -}}
++  {{- else -}}
++{{- include "mailpiler.mariadb.fullname" . -}}
++  {{- end -}}
++{{- else -}}
++  {{- if .Values.database.existingSecret -}}
++{{- .Values.database.existingSecret -}}
++  {{- else -}}
++{{- printf "%s-db" (include "mailpiler.fullname" .) -}}
++  {{- end -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.mariadb.fullname" -}}
++{{- if .Values.mariadb.fullnameOverride -}}
++{{- .Values.mariadb.fullnameOverride | trunc 63 | trimSuffix "-" -}}
++{{- else -}}
++{{- $name := default "mariadb" .Values.mariadb.nameOverride -}}
++{{- if contains $name .Release.Name -}}
++{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
++{{- else -}}
++{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
++{{- end -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.manticore.serviceName" -}}
++{{- printf "%s-manticore" (include "mailpiler.fullname" .) | trunc 63 | trimSuffix "-" -}}
++{{- end }}
++
++{{- define "mailpiler.smtpServiceName" -}}
++{{- printf "%s-smtp" (include "mailpiler.fullname" .) | trunc 63 | trimSuffix "-" -}}
++{{- end }}
++
++{{- define "mailpiler.smtp.host" -}}
++{{- if .Values.smtpService.enabled -}}
++{{- include "mailpiler.smtpServiceName" . -}}
++{{- else -}}
++{{- include "mailpiler.fullname" . -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.smtp.port" -}}
++{{- if .Values.smtpService.enabled -}}
++{{- .Values.smtpService.port -}}
++{{- else -}}
++{{- .Values.service.ports.smtp -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.memcached.fullname" -}}
++{{- if .Values.memcached.fullnameOverride -}}
++{{- .Values.memcached.fullnameOverride | trunc 63 | trimSuffix "-" -}}
++{{- else -}}
++{{- $name := default "memcached" .Values.memcached.nameOverride -}}
++{{- if contains $name .Release.Name -}}
++{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
++{{- else -}}
++{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
++{{- end -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.databaseHost" -}}
++{{- if .Values.mariadb.enabled -}}
++{{- include "mailpiler.mariadb.fullname" . -}}
++{{- else -}}
++{{- required "database.host is required when mariadb.enabled is false" .Values.database.host -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.databaseName" -}}
++{{- if .Values.mariadb.enabled -}}
++{{- required "mariadb.auth.database is required when mariadb.enabled is true" .Values.mariadb.auth.database -}}
++{{- else -}}
++{{- required "database.name is required when mariadb.enabled is false" .Values.database.name -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.databaseUser" -}}
++{{- if .Values.mariadb.enabled -}}
++{{- required "mariadb.auth.username is required when mariadb.enabled is true" .Values.mariadb.auth.username -}}
++{{- else -}}
++{{- required "database.user is required when mariadb.enabled is false" .Values.database.user -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.databasePasswordKey" -}}
++{{- if .Values.mariadb.enabled -}}
++{{- .Values.mariadb.auth.secretKeys.userPasswordKey -}}
++{{- else -}}
++{{- .Values.database.passwordKey -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.manticoreHost" -}}
++{{- if .Values.manticoresearch.enabled -}}
++{{- include "mailpiler.manticore.serviceName" . -}}
++{{- else -}}
++{{- required "manticore.host is required when manticoresearch.enabled is false" .Values.manticore.host -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.memcachedHost" -}}
++{{- if .Values.memcached.enabled -}}
++{{- include "mailpiler.memcached.fullname" . -}}
++{{- else -}}
++{{- required "memcached.host is required when memcached.enabled is false" .Values.memcached.host -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.configClaimName" -}}
++{{- if .Values.persistence.config.existingClaim -}}
++{{- .Values.persistence.config.existingClaim -}}
++{{- else -}}
++{{- printf "%s-config" (include "mailpiler.fullname" .) -}}
++{{- end -}}
++{{- end }}
++
++{{- define "mailpiler.storeClaimName" -}}
++{{- if .Values.persistence.store.existingClaim -}}
++{{- .Values.persistence.store.existingClaim -}}
++{{- else -}}
++{{- printf "%s-store" (include "mailpiler.fullname" .) -}}
++{{- end -}}
++{{- end }}
++
++{{/*
++Normalize Mailpiler PATH_PREFIX to avoid broken URLs like /mailpilerlogin.php.
++
++- Empty or "/" => ""
++- Ensures a leading "/" and a trailing "/"
++*/}}
++{{- define "mailpiler.pathPrefix" -}}
++{{- $p := .Values.mailpiler.pathPrefix | default "" -}}
++{{- if or (not $p) (eq $p "/") -}}
++{{- "" -}}
++{{- else -}}
++{{- if not (hasPrefix "/" $p) -}}
++{{- $p = printf "/%s" $p -}}
++{{- end -}}
++{{- if not (hasSuffix "/" $p) -}}
++{{- $p = printf "%s/" $p -}}
++{{- end -}}
++{{- $p -}}
++{{- end -}}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/db-secret.yaml b/charts/mailpiler/templates/db-secret.yaml
+new file mode 100644
+index 0000000..6d3b026
+--- /dev/null
++++ b/charts/mailpiler/templates/db-secret.yaml
+@@ -0,0 +1,12 @@
++{{- if and (not .Values.mariadb.enabled) (not .Values.database.existingSecret) }}
++apiVersion: v1
++kind: Secret
++metadata:
++  name: {{ include "mailpiler.databaseSecretName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++type: Opaque
++data:
++  {{ .Values.database.passwordKey }}: {{ required "database.password is required when mariadb.enabled is false and database.existingSecret is not set" .Values.database.password | b64enc | quote }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/deployment.yaml b/charts/mailpiler/templates/deployment.yaml
+new file mode 100644
+index 0000000..730c1b1
+--- /dev/null
++++ b/charts/mailpiler/templates/deployment.yaml
+@@ -0,0 +1,139 @@
++apiVersion: apps/v1
++kind: Deployment
++metadata:
++  name: {{ include "mailpiler.fullname" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++spec:
++  replicas: {{ .Values.replicaCount }}
++  selector:
++    matchLabels:
++      {{- include "mailpiler.selectorLabels" . | nindent 6 }}
++      app.kubernetes.io/component: mailpiler
++  template:
++    metadata:
++      {{- with .Values.podAnnotations }}
++      annotations:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
++      labels:
++        {{- include "mailpiler.labels" . | nindent 8 }}
++        app.kubernetes.io/component: mailpiler
++        {{- with .Values.podLabels }}
++        {{- toYaml . | nindent 8 }}
++        {{- end }}
++    spec:
++      {{- with .Values.imagePullSecrets }}
++      imagePullSecrets:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
++      serviceAccountName: {{ include "mailpiler.serviceAccountName" . }}
++      {{- with .Values.podSecurityContext }}
++      securityContext:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
++      containers:
++        - name: {{ .Chart.Name }}
++          {{- with .Values.securityContext }}
++          securityContext:
++            {{- toYaml . | nindent 12 }}
++          {{- end }}
++          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
++          imagePullPolicy: {{ .Values.image.pullPolicy }}
++          ports:
++            - name: smtp
++              containerPort: 25
++              protocol: TCP
++            - name: http
++              containerPort: 80
++              protocol: TCP
++            - name: https
++              containerPort: 443
++              protocol: TCP
++          env:
++            - name: PILER_HOSTNAME
++              value: {{ required "mailpiler.hostname is required" .Values.mailpiler.hostname | quote }}
++            - name: MYSQL_HOSTNAME
++              value: {{ include "mailpiler.databaseHost" . | quote }}
++            - name: MYSQL_DATABASE
++              value: {{ include "mailpiler.databaseName" . | quote }}
++            - name: MYSQL_USER
++              value: {{ include "mailpiler.databaseUser" . | quote }}
++            - name: MYSQL_PASSWORD
++              valueFrom:
++                secretKeyRef:
++                  name: {{ include "mailpiler.databaseSecretName" . }}
++                  key: {{ include "mailpiler.databasePasswordKey" . }}
++            - name: MEMCACHED_HOSTNAME
++              value: {{ include "mailpiler.memcachedHost" . | quote }}
++            - name: MANTICORE_HOSTNAME
++              value: {{ include "mailpiler.manticoreHost" . | quote }}
++            - name: RT
++              value: {{ .Values.mailpiler.rtIndex | quote }}
++            {{- $pathPrefix := include "mailpiler.pathPrefix" . }}
++            {{- if $pathPrefix }}
++            - name: PATH_PREFIX
++              value: {{ $pathPrefix | quote }}
++            {{- end }}
++            {{- if .Values.mailpiler.adminUserPasswordHash }}
++            - name: ADMIN_USER_PASSWORD_HASH
++              value: {{ .Values.mailpiler.adminUserPasswordHash | quote }}
++            {{- end }}
++            {{- with .Values.mailpiler.extraEnv }}
++            {{- toYaml . | nindent 12 }}
++            {{- end }}
++          {{- with .Values.mailpiler.extraEnvFrom }}
++          envFrom:
++            {{- toYaml . | nindent 12 }}
++          {{- end }}
++          {{- with .Values.livenessProbe }}
++          livenessProbe:
++            {{- toYaml . | nindent 12 }}
++          {{- end }}
++          {{- with .Values.readinessProbe }}
++          readinessProbe:
++            {{- toYaml . | nindent 12 }}
++          {{- end }}
++          {{- with .Values.resources }}
++          resources:
++            {{- toYaml . | nindent 12 }}
++          {{- end }}
++          volumeMounts:
++            - name: piler-config
++              mountPath: /etc/piler
++            - name: piler-store
++              mountPath: /var/piler/store
++            {{- with .Values.mailpiler.extraVolumeMounts }}
++            {{- toYaml . | nindent 12 }}
++            {{- end }}
++      volumes:
++        - name: piler-config
++          {{- if .Values.persistence.config.enabled }}
++          persistentVolumeClaim:
++            claimName: {{ include "mailpiler.configClaimName" . }}
++          {{- else }}
++          emptyDir: {}
++          {{- end }}
++        - name: piler-store
++          {{- if .Values.persistence.store.enabled }}
++          persistentVolumeClaim:
++            claimName: {{ include "mailpiler.storeClaimName" . }}
++          {{- else }}
++          emptyDir: {}
++          {{- end }}
++        {{- with .Values.mailpiler.extraVolumes }}
++        {{- toYaml . | nindent 8 }}
++        {{- end }}
++      {{- with .Values.nodeSelector }}
++      nodeSelector:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
++      {{- with .Values.affinity }}
++      affinity:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
++      {{- with .Values.tolerations }}
++      tolerations:
++        {{- toYaml . | nindent 8 }}
++      {{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/httproute.yaml b/charts/mailpiler/templates/httproute.yaml
+new file mode 100644
+index 0000000..3032f44
+--- /dev/null
++++ b/charts/mailpiler/templates/httproute.yaml
+@@ -0,0 +1,39 @@
++{{- if .Values.httpRoute.enabled -}}
++{{- $fullName := include "mailpiler.fullname" . -}}
++{{- $svcPort := .Values.service.ports.http -}}
++apiVersion: gateway.networking.k8s.io/v1
++kind: HTTPRoute
++metadata:
++  name: {{ $fullName }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++  {{- with .Values.httpRoute.annotations }}
++  annotations:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++spec:
++  parentRefs:
++    {{- with .Values.httpRoute.parentRefs }}
++      {{- toYaml . | nindent 4 }}
++    {{- end }}
++  {{- with .Values.httpRoute.hostnames }}
++  hostnames:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++  rules:
++    {{- range .Values.httpRoute.rules }}
++    {{- with .matches }}
++    - matches:
++      {{- toYaml . | nindent 8 }}
++    {{- end }}
++    {{- with .filters }}
++      filters:
++      {{- toYaml . | nindent 8 }}
++    {{- end }}
++      backendRefs:
++        - name: {{ $fullName }}
++          port: {{ $svcPort }}
++          weight: 1
++    {{- end }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/ingress.yaml b/charts/mailpiler/templates/ingress.yaml
+new file mode 100644
+index 0000000..601f2b8
+--- /dev/null
++++ b/charts/mailpiler/templates/ingress.yaml
+@@ -0,0 +1,44 @@
++{{- if .Values.ingress.enabled -}}
++apiVersion: networking.k8s.io/v1
++kind: Ingress
++metadata:
++  name: {{ include "mailpiler.fullname" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++  {{- with .Values.ingress.annotations }}
++  annotations:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++spec:
++  {{- with .Values.ingress.className }}
++  ingressClassName: {{ . }}
++  {{- end }}
++  {{- if .Values.ingress.tls }}
++  tls:
++    {{- range .Values.ingress.tls }}
++    - hosts:
++        {{- range .hosts }}
++        - {{ . | quote }}
++        {{- end }}
++      secretName: {{ .secretName }}
++    {{- end }}
++  {{- end }}
++  rules:
++    {{- range .Values.ingress.hosts }}
++    - host: {{ .host | quote }}
++      http:
++        paths:
++          {{- range .paths }}
++          - path: {{ .path }}
++            {{- with .pathType }}
++            pathType: {{ . }}
++            {{- end }}
++            backend:
++              service:
++                name: {{ include "mailpiler.fullname" $ }}
++                port:
++                  number: {{ $.Values.service.ports.http }}
++          {{- end }}
++    {{- end }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/manticore-init-job.yaml b/charts/mailpiler/templates/manticore-init-job.yaml
+new file mode 100644
+index 0000000..227c6a6
+--- /dev/null
++++ b/charts/mailpiler/templates/manticore-init-job.yaml
+@@ -0,0 +1,68 @@
++{{- if and .Values.manticoresearch.enabled .Values.manticoreInit.enabled }}
++apiVersion: batch/v1
++kind: Job
++metadata:
++  name: {{ include "mailpiler.fullname" . }}-manticore-init
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: manticore
++  annotations:
++    "helm.sh/hook": post-install,post-upgrade
++    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
++spec:
++  backoffLimit: 3
++  template:
++    metadata:
++      labels:
++        {{- include "mailpiler.labels" . | nindent 8 }}
++        app.kubernetes.io/component: manticore
++    spec:
++      restartPolicy: Never
++      containers:
++        - name: manticore-init
++          image: "{{ .Values.manticoreInit.image.repository }}:{{ .Values.manticoreInit.image.tag }}"
++          imagePullPolicy: {{ .Values.manticoreInit.image.pullPolicy }}
++          command:
++            - /bin/sh
++            - -c
++            - |
++              set -eu
++
++              HOST="{{ include "mailpiler.manticoreHost" . }}"
++              PORT="9306"
++              TIMEOUT="{{ .Values.manticoreInit.timeoutSeconds }}"
++
++              echo "Waiting for Manticore at ${HOST}:${PORT} (timeout: ${TIMEOUT}s)..."
++              end="$(( $(date +%s) + TIMEOUT ))"
++              while true; do
++                if mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SHOW TABLES" >/dev/null 2>&1; then
++                  break
++                fi
++                if [ "$(date +%s)" -ge "${end}" ]; then
++                  echo "Timed out waiting for Manticore at ${HOST}:${PORT}"
++                  exit 1
++                fi
++                sleep 3
++              done
++
++              ensure_table() {
++                name="$1"
++                if mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${name} LIMIT 0" >/dev/null 2>&1; then
++                  echo "Table ${name} already exists"
++                  return 0
++                fi
++
++                echo "Creating table ${name}"
++                mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "$2"
++
++                if ! mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${name} LIMIT 0" >/dev/null 2>&1; then
++                  echo "Failed to create table ${name}"
++                  exit 1
++                fi
++              }
++
++              ensure_table "piler1" "CREATE TABLE piler1 (sender text, rcpt text, senderdomain text, rcptdomain text, subject text, body text, attachment_types text, arrived bigint, sent bigint, size int, direction int, folder int, attachments int);"
++              ensure_table "tag1" "CREATE TABLE tag1 (tag text, mid bigint, uid int);"
++              ensure_table "note1" "CREATE TABLE note1 (note text, mid bigint, uid int);"
++              ensure_table "audit1" "CREATE TABLE audit1 (ts bigint, email text, action int, ipaddr text, meta_id bigint, description text);"
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/manticore-mailpiler-service.yaml b/charts/mailpiler/templates/manticore-mailpiler-service.yaml
+new file mode 100644
+index 0000000..c8b23bc
+--- /dev/null
++++ b/charts/mailpiler/templates/manticore-mailpiler-service.yaml
+@@ -0,0 +1,27 @@
++{{- if .Values.manticoresearch.enabled }}
++apiVersion: v1
++kind: Service
++metadata:
++  name: {{ include "mailpiler.manticore.serviceName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: manticore
++spec:
++  type: ClusterIP
++  ports:
++    - name: mysql
++      port: 9306
++      targetPort: 9306
++      protocol: TCP
++    - name: mysql-readonly
++      port: 9307
++      targetPort: 9306
++      protocol: TCP
++  selector:
++    # Mailpiler performs INSERT/REPLACE queries for RT indexing, so it must connect to a write-capable endpoint.
++    # The manticoresearch "balancer" exposes distributed tables which are not writable by default.
++    # Point Mailpiler directly at the workers; the balancer can still be enabled for other clients.
++    app.kubernetes.io/component: worker
++    app.kubernetes.io/instance: {{ .Release.Name }}
++    app.kubernetes.io/name: {{ default "manticoresearch" .Values.manticoresearch.nameOverride | trunc 63 | trimSuffix "-" }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/pvc-config.yaml b/charts/mailpiler/templates/pvc-config.yaml
+new file mode 100644
+index 0000000..79a54d0
+--- /dev/null
++++ b/charts/mailpiler/templates/pvc-config.yaml
+@@ -0,0 +1,18 @@
++{{- if and .Values.persistence.config.enabled (not .Values.persistence.config.existingClaim) }}
++apiVersion: v1
++kind: PersistentVolumeClaim
++metadata:
++  name: {{ include "mailpiler.configClaimName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++spec:
++  accessModes:
++    {{- toYaml .Values.persistence.config.accessModes | nindent 4 }}
++  {{- if .Values.persistence.config.storageClass }}
++  storageClassName: {{ .Values.persistence.config.storageClass }}
++  {{- end }}
++  resources:
++    requests:
++      storage: {{ .Values.persistence.config.size }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/pvc-store.yaml b/charts/mailpiler/templates/pvc-store.yaml
+new file mode 100644
+index 0000000..060fa47
+--- /dev/null
++++ b/charts/mailpiler/templates/pvc-store.yaml
+@@ -0,0 +1,18 @@
++{{- if and .Values.persistence.store.enabled (not .Values.persistence.store.existingClaim) }}
++apiVersion: v1
++kind: PersistentVolumeClaim
++metadata:
++  name: {{ include "mailpiler.storeClaimName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++spec:
++  accessModes:
++    {{- toYaml .Values.persistence.store.accessModes | nindent 4 }}
++  {{- if .Values.persistence.store.storageClass }}
++  storageClassName: {{ .Values.persistence.store.storageClass }}
++  {{- end }}
++  resources:
++    requests:
++      storage: {{ .Values.persistence.store.size }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/service.yaml b/charts/mailpiler/templates/service.yaml
+new file mode 100644
+index 0000000..ee4c9ab
+--- /dev/null
++++ b/charts/mailpiler/templates/service.yaml
+@@ -0,0 +1,36 @@
++apiVersion: v1
++kind: Service
++metadata:
++  name: {{ include "mailpiler.fullname" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++  {{- with .Values.service.annotations }}
++  annotations:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++spec:
++  type: {{ .Values.service.type }}
++  {{- if .Values.service.externalTrafficPolicy }}
++  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
++  {{- end }}
++  {{- if and (eq .Values.service.type "LoadBalancer") .Values.service.loadBalancerIP }}
++  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
++  {{- end }}
++  {{- with .Values.service.loadBalancerSourceRanges }}
++  loadBalancerSourceRanges:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++  ports:
++    {{- $expose := .Values.service.expose | default dict }}
++    {{- range $name, $port := .Values.service.ports }}
++    {{- if (index $expose $name | default true) }}
++    - name: {{ $name }}
++      port: {{ $port }}
++      targetPort: {{ $name }}
++      protocol: TCP
++    {{- end }}
++    {{- end }}
++  selector:
++    {{- include "mailpiler.selectorLabels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/serviceaccount.yaml b/charts/mailpiler/templates/serviceaccount.yaml
+new file mode 100644
+index 0000000..b3decf4
+--- /dev/null
++++ b/charts/mailpiler/templates/serviceaccount.yaml
+@@ -0,0 +1,14 @@
++{{- if .Values.serviceAccount.create -}}
++apiVersion: v1
++kind: ServiceAccount
++metadata:
++  name: {{ include "mailpiler.serviceAccountName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++  {{- with .Values.serviceAccount.annotations }}
++  annotations:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/smtp-service.yaml b/charts/mailpiler/templates/smtp-service.yaml
+new file mode 100644
+index 0000000..8d3f724
+--- /dev/null
++++ b/charts/mailpiler/templates/smtp-service.yaml
+@@ -0,0 +1,33 @@
++{{- if .Values.smtpService.enabled }}
++apiVersion: v1
++kind: Service
++metadata:
++  name: {{ include "mailpiler.smtpServiceName" . }}
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: smtp
++  {{- with .Values.smtpService.annotations }}
++  annotations:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++spec:
++  type: {{ .Values.smtpService.type }}
++  {{- if .Values.smtpService.externalTrafficPolicy }}
++  externalTrafficPolicy: {{ .Values.smtpService.externalTrafficPolicy }}
++  {{- end }}
++  {{- if and (eq .Values.smtpService.type "LoadBalancer") .Values.smtpService.loadBalancerIP }}
++  loadBalancerIP: {{ .Values.smtpService.loadBalancerIP }}
++  {{- end }}
++  {{- with .Values.smtpService.loadBalancerSourceRanges }}
++  loadBalancerSourceRanges:
++    {{- toYaml . | nindent 4 }}
++  {{- end }}
++  ports:
++    - name: smtp
++      port: {{ .Values.smtpService.port }}
++      targetPort: smtp
++      protocol: TCP
++  selector:
++    {{- include "mailpiler.selectorLabels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/tests/test-manticore-tables.yaml b/charts/mailpiler/templates/tests/test-manticore-tables.yaml
+new file mode 100644
+index 0000000..0798ab7
+--- /dev/null
++++ b/charts/mailpiler/templates/tests/test-manticore-tables.yaml
+@@ -0,0 +1,30 @@
++{{- if .Values.manticoresearch.enabled }}
++apiVersion: v1
++kind: Pod
++metadata:
++  name: "{{ include "mailpiler.fullname" . }}-test-manticore-tables"
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: manticore
++  annotations:
++    "helm.sh/hook": test
++spec:
++  containers:
++    - name: test-manticore-tables
++      image: "{{ .Values.manticoreInit.image.repository }}:{{ .Values.manticoreInit.image.tag }}"
++      imagePullPolicy: {{ .Values.manticoreInit.image.pullPolicy }}
++      command:
++        - /bin/sh
++        - -c
++        - |
++          set -eu
++
++          HOST="{{ include "mailpiler.manticoreHost" . }}"
++          PORT="9306"
++
++          for t in piler1 tag1 note1 audit1; do
++            echo "Checking Manticore table: ${t}"
++            mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${t} LIMIT 0" >/dev/null
++          done
++  restartPolicy: Never
++{{- end }}
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/tests/test-stack.yaml b/charts/mailpiler/templates/tests/test-stack.yaml
+new file mode 100644
+index 0000000..e728fae
+--- /dev/null
++++ b/charts/mailpiler/templates/tests/test-stack.yaml
+@@ -0,0 +1,69 @@
++{{- $fullName := include "mailpiler.fullname" . -}}
++{{- $httpPort := .Values.service.ports.http -}}
++{{- $smtpHost := include "mailpiler.smtp.host" . -}}
++{{- $smtpPort := include "mailpiler.smtp.port" . -}}
++{{- $path := .Values.mailpiler.pathPrefix | default "/" -}}
++{{- if ne $path "/" -}}
++{{- if not (hasSuffix "/" $path) -}}
++{{- $path = printf "%s/" $path -}}
++{{- end -}}
++{{- end -}}
++apiVersion: v1
++kind: Pod
++metadata:
++  name: "{{ include "mailpiler.fullname" . }}-test-stack"
++  labels:
++    {{- include "mailpiler.labels" . | nindent 4 }}
++    app.kubernetes.io/component: mailpiler
++  annotations:
++    "helm.sh/hook": test
++spec:
++  containers:
++    - name: mailpiler-test
++      image: busybox:1.37.0
++      command:
++        - /bin/sh
++        - -c
++        - |
++          set -e
++
++          wait_port() {
++            host="$1"
++            port="$2"
++            name="$3"
++            i=0
++            until nc -z -w3 "$host" "$port" >/dev/null 2>&1; do
++              i=$((i+1))
++              if [ "$i" -ge 20 ]; then
++                echo "Timeout waiting for $name at $host:$port"
++                exit 1
++              fi
++              sleep 3
++            done
++          }
++
++          wait_http() {
++            url="$1"
++            i=0
++            until wget -qO- "$url" >/dev/null 2>&1; do
++              i=$((i+1))
++              if [ "$i" -ge 20 ]; then
++                echo "Timeout waiting for HTTP at $url"
++                exit 1
++              fi
++              sleep 3
++            done
++          }
++
++          wait_port "{{ $smtpHost }}" "{{ $smtpPort }}" "mailpiler-smtp"
++          wait_http "http://{{ $fullName }}:{{ $httpPort }}{{ $path }}"
++
++          {{- if .Values.manticoresearch.enabled }}
++          wait_port "{{ include "mailpiler.manticoreHost" . }}" "9306" "manticore-ql"
++          wait_port "{{ include "mailpiler.manticoreHost" . }}" "9307" "manticore-ql-readonly"
++          {{- end }}
++
++          {{- if .Values.memcached.enabled }}
++          wait_port "{{ include "mailpiler.memcached.fullname" . }}" "{{ .Values.memcached.service.port }}" "memcached"
++          {{- end }}
++  restartPolicy: Never
+\ No newline at end of file
+diff --git a/charts/mailpiler/templates/validate-values.yaml b/charts/mailpiler/templates/validate-values.yaml
+new file mode 100644
+index 0000000..bef7a68
+--- /dev/null
++++ b/charts/mailpiler/templates/validate-values.yaml
+@@ -0,0 +1,7 @@
++{{- if eq (.Values.service.type | default "ClusterIP") "NodePort" -}}
++{{- fail "mailpiler: service.type=NodePort is not supported in this chart; use ClusterIP/LoadBalancer (or enable smtpService for SMTP-only LoadBalancer)." -}}
++{{- end -}}
++
++{{- if and .Values.smtpService.enabled (eq (.Values.smtpService.type | default "LoadBalancer") "NodePort") -}}
++{{- fail "mailpiler: smtpService.type=NodePort is not supported; use LoadBalancer (MetalLB/cloud) for SMTP exposure." -}}
++{{- end -}}
+\ No newline at end of file
+diff --git a/charts/mailpiler/values.yaml b/charts/mailpiler/values.yaml
+new file mode 100644
+index 0000000..3159ad9
+--- /dev/null
++++ b/charts/mailpiler/values.yaml
+@@ -0,0 +1,239 @@
++# Mailpiler deployment replicas.
++replicaCount: 1
++
++# Mailpiler container image settings.
++image:
++  repository: sutoj/piler
++  pullPolicy: IfNotPresent
++  tag: "1.4.8"
++
++# Image pull secrets for private registries.
++imagePullSecrets: []
++
++# Override chart name or full name.
++nameOverride: ""
++fullnameOverride: ""
++
++# Service account settings for Mailpiler.
++serviceAccount:
++  create: true
++  automount: true
++  annotations: {}
++  name: ""
++
++# Extra metadata for Mailpiler pods.
++podAnnotations: {}
++podLabels: {}
++
++# Pod-level and container-level security context.
++podSecurityContext: {}
++securityContext: {}
++
++# Mailpiler application settings.
++mailpiler:
++  # Public hostname used by Mailpiler.
++  hostname: "archive.example.com"
++  # Enable RT index (1/0).
++  rtIndex: 1
++  # Optional URL path prefix if running under a subpath.
++  # Trailing "/" is optional; the chart normalizes it automatically.
++  pathPrefix: ""
++  # Optional admin password hash for uid=0 (a `crypt()` hash; recommended: SHA512-crypt "$6$...").
++  # Default Mailpiler login: admin@local / pilerrocks
++  adminUserPasswordHash: ""
++  # Extra env vars injected into the Mailpiler container.
++  extraEnv: []
++  # Extra envFrom entries injected into the Mailpiler container.
++  extraEnvFrom: []
++  # Extra volumes and mounts appended to the Mailpiler pod spec.
++  extraVolumes: []
++  extraVolumeMounts: []
++
++# Mailpiler service settings.
++service:
++  type: ClusterIP
++  # Control which ports are exposed on the main Service.
++  # Tip: set `service.expose.smtp=false` and enable `smtpService.enabled=true`
++  # to expose only SMTP via a dedicated Service (e.g. LoadBalancer).
++  expose:
++    smtp: true
++    http: true
++    https: true
++  # Optional annotations for the Service (e.g. cloud-provider settings).
++  annotations: {}
++  # Optional external traffic policy for LoadBalancer ("Cluster" or "Local").
++  externalTrafficPolicy: ""
++  # Optional static IP for Service type LoadBalancer.
++  loadBalancerIP: ""
++  # Optional source ranges for Service type LoadBalancer.
++  loadBalancerSourceRanges: []
++  ports:
++    smtp: 25
++    http: 80
++    https: 443
++
++# Optional dedicated Service for SMTP only (useful when you want only SMTP exposed externally).
++smtpService:
++  enabled: false
++  type: LoadBalancer
++  annotations: {}
++  externalTrafficPolicy: ""
++  loadBalancerIP: ""
++  loadBalancerSourceRanges: []
++  # Service port exposed externally (Mailpiler listens on container port 25).
++  port: 25
++
++# Ingress configuration for the Mailpiler web UI.
++ingress:
++  enabled: false
++  className: ""
++  annotations: {}
++  hosts:
++    - host: mailpiler.local
++      paths:
++        - path: /
++          pathType: Prefix
++  tls: []
++
++# Expose the service via gateway-api HTTPRoute.
++# Requires Gateway API resources and a suitable controller installed in the cluster.
++httpRoute:
++  enabled: false
++  annotations: {}
++  parentRefs:
++    - name: gateway
++      sectionName: http
++  hostnames:
++    - mailpiler.local
++  rules:
++    - matches:
++        - path:
++            type: PathPrefix
++            value: /
++
++# Resources for the Mailpiler container.
++resources: {}
++
++# Health probes for the Mailpiler web UI.
++livenessProbe:
++  httpGet:
++    path: /
++    port: http
++readinessProbe:
++  httpGet:
++    path: /
++    port: http
++
++# Persistence for Mailpiler config and message store.
++persistence:
++  config:
++    enabled: true
++    existingClaim: ""
++    storageClass: ""
++    accessModes:
++      - ReadWriteOnce
++    size: 1Gi
++  store:
++    enabled: true
++    existingClaim: ""
++    storageClass: ""
++    accessModes:
++      - ReadWriteOnce
++    size: 10Gi
++
++# External database settings (used only when mariadb.enabled is false).
++database:
++  host: ""
++  name: piler
++  user: piler
++  password: ""
++  existingSecret: ""
++  passwordKey: mysql-password
++
++# MariaDB dependency settings (CloudPirates chart).
++mariadb:
++  enabled: true
++  nameOverride: ""
++  fullnameOverride: ""
++  auth:
++    enabled: true
++    database: piler
++    username: piler
++    password: ""
++    existingSecret: ""
++    secretKeys:
++      rootPasswordKey: mariadb-root-password
++      userPasswordKey: mariadb-password
++  service:
++    type: ClusterIP
++    port: 3306
++  persistence:
++    enabled: true
++    storageClass: ""
++    accessModes:
++      - ReadWriteOnce
++    size: 8Gi
++  config:
++    customConfiguration: |
++      [mariadb]
++      innodb_buffer_pool_size = 256M
++      innodb_flush_log_at_trx_commit=1
++      innodb_log_buffer_size=64M
++      innodb_log_file_size=64M
++      innodb_read_io_threads=4
++      innodb_write_io_threads=4
++      innodb_log_files_in_group=2
++      innodb_file_per_table
++  resources: {}
++
++# Manticore settings.
++#
++# This chart uses the official `manticoresearch` Helm chart as a dependency.
++# Values under `manticoresearch` are passed through to that dependency.
++manticoresearch:
++  enabled: true
++  balancer:
++    enabled: true
++    replicaCount: 1
++  worker:
++    replicaCount: 1
++
++# External Manticore settings (used only when manticoresearch.enabled is false).
++manticore:
++  host: ""
++
++# Create the required Mailpiler RT tables in Manticore.
++manticoreInit:
++  enabled: true
++  timeoutSeconds: 180
++  image:
++    repository: manticoresearch/helm-worker
++    tag: "15.1.0"
++    pullPolicy: IfNotPresent
++
++# Memcached dependency settings (CloudPirates chart).
++memcached:
++  enabled: true
++  nameOverride: ""
++  fullnameOverride: ""
++  # Hostname for an external Memcached instance when disabled.
++  host: ""
++  replicaCount: 1
++  service:
++    type: ClusterIP
++    port: 11211
++  config:
++    memoryLimit: 64
++    maxConnections: 1024
++    extraArgs: []
++    verbosity: 0
++  resources: {}
++  podAnnotations: {}
++  podLabels: {}
++
++# Node scheduling settings.
++nodeSelector: {}
++
++tolerations: []
++
++affinity: {}
+\ No newline at end of file
+diff --git a/cosign.pub b/cosign.pub
+new file mode 100644
+index 0000000..413ad46
+--- /dev/null
++++ b/cosign.pub
+@@ -0,0 +1,4 @@
++-----BEGIN PUBLIC KEY-----
++MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOvBDeoZ9E0t0AsSAcGoNDO6QByQu
++z/L+AY0orM/qi1qBymCd/C4D7v837Q7Tn9RXq/POv8p1FjrhAsShTRYwUg==
++-----END PUBLIC KEY-----
+-- 
+2.51.2.windows.1
+

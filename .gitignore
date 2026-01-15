@@ -1,0 +1,6 @@
+# Helm dependency archives
+charts/**/charts/
+charts/**/Chart.lock
+
+# Development
+development/

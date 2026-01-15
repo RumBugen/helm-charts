@@ -1,0 +1,20 @@
+apiVersion: v2
+name: mailpiler
+description: Mailpiler is a powerful, scalable email archiving platform that helps organizations comply with regulations, reduce storage costs, and improve email management. 
+type: application
+version: 0.1.0
+appVersion: "1.4.8"
+
+dependencies:
+  - name: mariadb
+    version: 0.10.1
+    repository: https://cloudpirates-io.github.io/helm-charts
+    condition: mariadb.enabled
+  - name: memcached
+    version: 0.8.2
+    repository: https://cloudpirates-io.github.io/helm-charts
+    condition: memcached.enabled
+  - name: manticoresearch
+    version: 15.1.0
+    repository: https://manticoresoftware.github.io/manticoresearch-helm
+    condition: manticoresearch.enabled

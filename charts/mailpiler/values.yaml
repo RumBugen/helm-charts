@@ -1,0 +1,239 @@
+# Mailpiler deployment replicas.
+replicaCount: 1
+
+# Mailpiler container image settings.
+image:
+  repository: sutoj/piler
+  pullPolicy: IfNotPresent
+  tag: "1.4.8"
+
+# Image pull secrets for private registries.
+imagePullSecrets: []
+
+# Override chart name or full name.
+nameOverride: ""
+fullnameOverride: ""
+
+# Service account settings for Mailpiler.
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+# Extra metadata for Mailpiler pods.
+podAnnotations: {}
+podLabels: {}
+
+# Pod-level and container-level security context.
+podSecurityContext: {}
+securityContext: {}
+
+# Mailpiler application settings.
+mailpiler:
+  # Public hostname used by Mailpiler.
+  hostname: "archive.example.com"
+  # Enable RT index (1/0).
+  rtIndex: 1
+  # Optional URL path prefix if running under a subpath.
+  # Trailing "/" is optional; the chart normalizes it automatically.
+  pathPrefix: ""
+  # Optional admin password hash for uid=0 (a `crypt()` hash; recommended: SHA512-crypt "$6$...").
+  # Default Mailpiler login: admin@local / pilerrocks
+  adminUserPasswordHash: ""
+  # Extra env vars injected into the Mailpiler container.
+  extraEnv: []
+  # Extra envFrom entries injected into the Mailpiler container.
+  extraEnvFrom: []
+  # Extra volumes and mounts appended to the Mailpiler pod spec.
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# Mailpiler service settings.
+service:
+  type: ClusterIP
+  # Control which ports are exposed on the main Service.
+  # Tip: set `service.expose.smtp=false` and enable `smtpService.enabled=true`
+  # to expose only SMTP via a dedicated Service (e.g. LoadBalancer).
+  expose:
+    smtp: true
+    http: true
+    https: true
+  # Optional annotations for the Service (e.g. cloud-provider settings).
+  annotations: {}
+  # Optional external traffic policy for LoadBalancer ("Cluster" or "Local").
+  externalTrafficPolicy: ""
+  # Optional static IP for Service type LoadBalancer.
+  loadBalancerIP: ""
+  # Optional source ranges for Service type LoadBalancer.
+  loadBalancerSourceRanges: []
+  ports:
+    smtp: 25
+    http: 80
+    https: 443
+
+# Optional dedicated Service for SMTP only (useful when you want only SMTP exposed externally).
+smtpService:
+  enabled: false
+  type: LoadBalancer
+  annotations: {}
+  externalTrafficPolicy: ""
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+  # Service port exposed externally (Mailpiler listens on container port 25).
+  port: 25
+
+# Ingress configuration for the Mailpiler web UI.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mailpiler.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Expose the service via gateway-api HTTPRoute.
+# Requires Gateway API resources and a suitable controller installed in the cluster.
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: gateway
+      sectionName: http
+  hostnames:
+    - mailpiler.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+# Resources for the Mailpiler container.
+resources: {}
+
+# Health probes for the Mailpiler web UI.
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+# Persistence for Mailpiler config and message store.
+persistence:
+  config:
+    enabled: true
+    existingClaim: ""
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+  store:
+    enabled: true
+    existingClaim: ""
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+
+# External database settings (used only when mariadb.enabled is false).
+database:
+  host: ""
+  name: piler
+  user: piler
+  password: ""
+  existingSecret: ""
+  passwordKey: mysql-password
+
+# MariaDB dependency settings (CloudPirates chart).
+mariadb:
+  enabled: true
+  nameOverride: ""
+  fullnameOverride: ""
+  auth:
+    enabled: true
+    database: piler
+    username: piler
+    password: ""
+    existingSecret: ""
+    secretKeys:
+      rootPasswordKey: mariadb-root-password
+      userPasswordKey: mariadb-password
+  service:
+    type: ClusterIP
+    port: 3306
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 8Gi
+  config:
+    customConfiguration: |
+      [mariadb]
+      innodb_buffer_pool_size = 256M
+      innodb_flush_log_at_trx_commit=1
+      innodb_log_buffer_size=64M
+      innodb_log_file_size=64M
+      innodb_read_io_threads=4
+      innodb_write_io_threads=4
+      innodb_log_files_in_group=2
+      innodb_file_per_table
+  resources: {}
+
+# Manticore settings.
+#
+# This chart uses the official `manticoresearch` Helm chart as a dependency.
+# Values under `manticoresearch` are passed through to that dependency.
+manticoresearch:
+  enabled: true
+  balancer:
+    enabled: true
+    replicaCount: 1
+  worker:
+    replicaCount: 1
+
+# External Manticore settings (used only when manticoresearch.enabled is false).
+manticore:
+  host: ""
+
+# Create the required Mailpiler RT tables in Manticore.
+manticoreInit:
+  enabled: true
+  timeoutSeconds: 180
+  image:
+    repository: manticoresearch/helm-worker
+    tag: "15.1.0"
+    pullPolicy: IfNotPresent
+
+# Memcached dependency settings (CloudPirates chart).
+memcached:
+  enabled: true
+  nameOverride: ""
+  fullnameOverride: ""
+  # Hostname for an external Memcached instance when disabled.
+  host: ""
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 11211
+  config:
+    memoryLimit: 64
+    maxConnections: 1024
+    extraArgs: []
+    verbosity: 0
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+
+# Node scheduling settings.
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

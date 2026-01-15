@@ -1,0 +1,69 @@
+{{- $fullName := include "mailpiler.fullname" . -}}
+{{- $httpPort := .Values.service.ports.http -}}
+{{- $smtpHost := include "mailpiler.smtp.host" . -}}
+{{- $smtpPort := include "mailpiler.smtp.port" . -}}
+{{- $path := .Values.mailpiler.pathPrefix | default "/" -}}
+{{- if ne $path "/" -}}
+{{- if not (hasSuffix "/" $path) -}}
+{{- $path = printf "%s/" $path -}}
+{{- end -}}
+{{- end -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "mailpiler.fullname" . }}-test-stack"
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpiler
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: mailpiler-test
+      image: busybox:1.37.0
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+
+          wait_port() {
+            host="$1"
+            port="$2"
+            name="$3"
+            i=0
+            until nc -z -w3 "$host" "$port" >/dev/null 2>&1; do
+              i=$((i+1))
+              if [ "$i" -ge 20 ]; then
+                echo "Timeout waiting for $name at $host:$port"
+                exit 1
+              fi
+              sleep 3
+            done
+          }
+
+          wait_http() {
+            url="$1"
+            i=0
+            until wget -qO- "$url" >/dev/null 2>&1; do
+              i=$((i+1))
+              if [ "$i" -ge 20 ]; then
+                echo "Timeout waiting for HTTP at $url"
+                exit 1
+              fi
+              sleep 3
+            done
+          }
+
+          wait_port "{{ $smtpHost }}" "{{ $smtpPort }}" "mailpiler-smtp"
+          wait_http "http://{{ $fullName }}:{{ $httpPort }}{{ $path }}"
+
+          {{- if .Values.manticoresearch.enabled }}
+          wait_port "{{ include "mailpiler.manticoreHost" . }}" "9306" "manticore-ql"
+          wait_port "{{ include "mailpiler.manticoreHost" . }}" "9307" "manticore-ql-readonly"
+          {{- end }}
+
+          {{- if .Values.memcached.enabled }}
+          wait_port "{{ include "mailpiler.memcached.fullname" . }}" "{{ .Values.memcached.service.port }}" "memcached"
+          {{- end }}
+  restartPolicy: Never

@@ -1,0 +1,30 @@
+{{- if .Values.manticoresearch.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "mailpiler.fullname" . }}-test-manticore-tables"
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manticore
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: test-manticore-tables
+      image: "{{ .Values.manticoreInit.image.repository }}:{{ .Values.manticoreInit.image.tag }}"
+      imagePullPolicy: {{ .Values.manticoreInit.image.pullPolicy }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+
+          HOST="{{ include "mailpiler.manticoreHost" . }}"
+          PORT="9306"
+
+          for t in piler1 tag1 note1 audit1; do
+            echo "Checking Manticore table: ${t}"
+            mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${t} LIMIT 0" >/dev/null
+          done
+  restartPolicy: Never
+{{- end }}

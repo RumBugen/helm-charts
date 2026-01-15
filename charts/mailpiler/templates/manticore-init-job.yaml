@@ -1,0 +1,68 @@
+{{- if and .Values.manticoresearch.enabled .Values.manticoreInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mailpiler.fullname" . }}-manticore-init
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manticore
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "mailpiler.labels" . | nindent 8 }}
+        app.kubernetes.io/component: manticore
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: manticore-init
+          image: "{{ .Values.manticoreInit.image.repository }}:{{ .Values.manticoreInit.image.tag }}"
+          imagePullPolicy: {{ .Values.manticoreInit.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+
+              HOST="{{ include "mailpiler.manticoreHost" . }}"
+              PORT="9306"
+              TIMEOUT="{{ .Values.manticoreInit.timeoutSeconds }}"
+
+              echo "Waiting for Manticore at ${HOST}:${PORT} (timeout: ${TIMEOUT}s)..."
+              end="$(( $(date +%s) + TIMEOUT ))"
+              while true; do
+                if mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SHOW TABLES" >/dev/null 2>&1; then
+                  break
+                fi
+                if [ "$(date +%s)" -ge "${end}" ]; then
+                  echo "Timed out waiting for Manticore at ${HOST}:${PORT}"
+                  exit 1
+                fi
+                sleep 3
+              done
+
+              ensure_table() {
+                name="$1"
+                if mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${name} LIMIT 0" >/dev/null 2>&1; then
+                  echo "Table ${name} already exists"
+                  return 0
+                fi
+
+                echo "Creating table ${name}"
+                mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "$2"
+
+                if ! mysql --protocol=tcp -h "${HOST}" -P "${PORT}" -e "SELECT 1 FROM ${name} LIMIT 0" >/dev/null 2>&1; then
+                  echo "Failed to create table ${name}"
+                  exit 1
+                fi
+              }
+
+              ensure_table "piler1" "CREATE TABLE piler1 (sender text, rcpt text, senderdomain text, rcptdomain text, subject text, body text, attachment_types text, arrived bigint, sent bigint, size int, direction int, folder int, attachments int);"
+              ensure_table "tag1" "CREATE TABLE tag1 (tag text, mid bigint, uid int);"
+              ensure_table "note1" "CREATE TABLE note1 (note text, mid bigint, uid int);"
+              ensure_table "audit1" "CREATE TABLE audit1 (ts bigint, email text, action int, ipaddr text, meta_id bigint, description text);"
+{{- end }}

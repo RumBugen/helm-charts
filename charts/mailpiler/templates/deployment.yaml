@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mailpiler.fullname" . }}
+  labels:
+    {{- include "mailpiler.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpiler
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mailpiler.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mailpiler
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "mailpiler.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mailpiler
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mailpiler.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: smtp
+              containerPort: 25
+              protocol: TCP
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              protocol: TCP
+          env:
+            - name: PILER_HOSTNAME
+              value: {{ required "mailpiler.hostname is required" .Values.mailpiler.hostname | quote }}
+            - name: MYSQL_HOSTNAME
+              value: {{ include "mailpiler.databaseHost" . | quote }}
+            - name: MYSQL_DATABASE
+              value: {{ include "mailpiler.databaseName" . | quote }}
+            - name: MYSQL_USER
+              value: {{ include "mailpiler.databaseUser" . | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mailpiler.databaseSecretName" . }}
+                  key: {{ include "mailpiler.databasePasswordKey" . }}
+            - name: MEMCACHED_HOSTNAME
+              value: {{ include "mailpiler.memcachedHost" . | quote }}
+            - name: MANTICORE_HOSTNAME
+              value: {{ include "mailpiler.manticoreHost" . | quote }}
+            - name: RT
+              value: {{ .Values.mailpiler.rtIndex | quote }}
+            {{- $pathPrefix := include "mailpiler.pathPrefix" . }}
+            {{- if $pathPrefix }}
+            - name: PATH_PREFIX
+              value: {{ $pathPrefix | quote }}
+            {{- end }}
+            {{- if .Values.mailpiler.adminUserPasswordHash }}
+            - name: ADMIN_USER_PASSWORD_HASH
+              value: {{ .Values.mailpiler.adminUserPasswordHash | quote }}
+            {{- end }}
+            {{- with .Values.mailpiler.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.mailpiler.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: piler-config
+              mountPath: /etc/piler
+            - name: piler-store
+              mountPath: /var/piler/store
+            {{- with .Values.mailpiler.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: piler-config
+          {{- if .Values.persistence.config.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mailpiler.configClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: piler-store
+          {{- if .Values.persistence.store.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mailpiler.storeClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.mailpiler.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
