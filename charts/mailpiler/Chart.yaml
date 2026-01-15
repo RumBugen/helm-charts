@@ -8,11 +8,11 @@ appVersion: "1.4.8"
 dependencies:
   - name: mariadb
     version: 0.10.1
-    repository: https://cloudpirates-io.github.io/helm-charts
+    repository: oci://registry-1.docker.io/cloudpirates
     condition: mariadb.enabled
   - name: memcached
     version: 0.8.2
-    repository: https://cloudpirates-io.github.io/helm-charts
+    repository: oci://registry-1.docker.io/cloudpirates
     condition: memcached.enabled
   - name: manticoresearch
     version: 15.1.0

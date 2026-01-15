@@ -39,6 +39,61 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.10.0
 
+      - name: Add dependency repos
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          chart_files=(charts/*/Chart.yaml)
+          if [[ ${#chart_files[@]} -eq 0 ]]; then
+            echo "No charts found under charts/*/Chart.yaml"
+            exit 0
+          fi
+
+          declare -A repo_urls=()
+          declare -A oci_urls=()
+          while IFS= read -r url; do
+            url="$(echo "${url}" | tr -d '\r"' | xargs)"
+            case "${url}" in
+              https://*)
+                repo_urls["${url}"]=1
+                ;;
+              oci://*)
+                oci_urls["${url}"]=1
+                ;;
+            esac
+          done < <(awk '
+            /^[[:space:]]*repository:[[:space:]]*/ {
+              sub(/^[[:space:]]*repository:[[:space:]]*/, "", $0)
+              gsub(/\r/, "", $0)
+              print $0
+            }
+          ' "${chart_files[@]}" || true)
+
+          if [[ ${#repo_urls[@]} -eq 0 ]]; then
+            echo "No dependency repositories found."
+            exit 0
+          fi
+
+          i=0
+          for url in "${!repo_urls[@]}"; do
+            i=$((i + 1))
+            host="${url#http://}"
+            host="${host#https://}"
+            host="${host%%/*}"
+            name="$(echo "${host}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')"
+            name="${name#-}"
+            name="${name%-}"
+            name="${name:-repo}"
+            name="${name:0:40}-${i}"
+
+            echo "Adding Helm repo ${name} -> ${url}"
+            helm repo add "${name}" "${url}" --force-update
+          done
+
+          helm repo update
+
       - name: Update chart dependencies
         shell: bash
         run: |
