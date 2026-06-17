@@ -5,7 +5,8 @@ replicaCount: 1
 image:
   repository: sutoj/piler
   pullPolicy: IfNotPresent
-  tag: "1.4.8"
+  tag: "1.4.9"
+  digest: "sha256:e94727da69f5ea3025452dc841b2b6606cfc8affee0bc6d9f9c4d7f20486b483"
 
 # Image pull secrets for private registries.
 imagePullSecrets: []
@@ -208,7 +209,7 @@ manticoreInit:
   timeoutSeconds: 180
   image:
     repository: manticoresearch/helm-worker
-    tag: "15.1.0"
+    tag: "25.0.0"
     pullPolicy: IfNotPresent
 
 # Memcached dependency settings (CloudPirates chart).

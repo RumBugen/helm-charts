@@ -1,0 +1,12 @@
+dependencies:
+- name: mariadb
+  repository: oci://registry-1.docker.io/cloudpirates
+  version: 0.10.1
+- name: memcached
+  repository: oci://registry-1.docker.io/cloudpirates
+  version: 0.8.2
+- name: manticoresearch
+  repository: https://manticoresoftware.github.io/manticoresearch-helm
+  version: 25.0.0
+digest: sha256:273ff77c923c39a51affc77d22ecd751e12ef88f855d4dfc6b3ae9c5ca6e3887
+generated: "2026-06-17T16:24:57.056799988+02:00"

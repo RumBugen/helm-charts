@@ -10,11 +10,11 @@ Verify the signature first (recommended): see `COSIGN.md`.
 
 ```bash
 # GHCR
-helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.0 \
+helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.2 \
   --set mailpiler.hostname=archive.example.com
 
 # Docker Hub
-helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.0 \
+helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.2 \
   --set mailpiler.hostname=archive.example.com
 ```
 
@@ -37,6 +37,7 @@ helm install mailpiler charts/mailpiler \
 ## Key values
 
 - `mailpiler.hostname`: public hostname for Mailpiler
+- `image.digest`: pinned Mailpiler image digest for immutable deployments
 - `mailpiler.rtIndex`: enable RT index (1/0)
 - `mailpiler.pathPrefix`: optional URL prefix (trailing `/` is optional)
 - `persistence.config` / `persistence.store`: PVCs for `/etc/piler` and `/var/piler/store`
