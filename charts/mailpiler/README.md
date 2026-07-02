@@ -39,6 +39,7 @@ helm install mailpiler charts/mailpiler \
 - `mailpiler.hostname`: public hostname for Mailpiler
 - `image.digest`: pinned Mailpiler image digest for immutable deployments
 - `mailpiler.rtIndex`: enable RT index (1/0)
+- `mailpiler.sphinxMainIndex`: Manticore/Sphinx main table name; use `manticore_cluster:piler1` for cluster-qualified writes
 - `mailpiler.pathPrefix`: optional URL prefix (trailing `/` is optional)
 - `persistence.config` / `persistence.store`: PVCs for `/etc/piler` and `/var/piler/store`
 - `service.type`: `ClusterIP` (default) or `LoadBalancer`
@@ -73,6 +74,16 @@ The Mailpiler container expects Manticore on:
 The chart creates a small Service (`<release>-manticore`, for example `mailpiler-manticore`) that exposes **both** ports and routes them to the **Manticore workers**.
 
 This is important: Mailpiler performs `REPLACE INTO ...` statements for RT indexing, and the `manticoresearch` chart's **balancer** exposes *distributed* tables which are not writable by default. Connecting Mailpiler to the workers avoids errors like `table 'piler1' does not support INSERT`.
+
+When the Manticore worker has added the RT tables to a cluster, set cluster-qualified table names so Mailpiler writes to the clustered tables:
+
+```yaml
+mailpiler:
+  sphinxMainIndex: manticore_cluster:piler1
+  sphinxTagIndex: manticore_cluster:tag1
+  sphinxNoteIndex: manticore_cluster:note1
+  sphinxAuditIndex: manticore_cluster:audit1
+```
 
 ## Exposing SMTP on a different port
 

@@ -72,6 +72,14 @@ spec:
               value: {{ include "mailpiler.manticoreHost" . | quote }}
             - name: RT
               value: {{ .Values.mailpiler.rtIndex | quote }}
+            - name: MAILPILER_SPHINX_MAIN_INDEX
+              value: {{ .Values.mailpiler.sphinxMainIndex | quote }}
+            - name: MAILPILER_SPHINX_TAG_INDEX
+              value: {{ .Values.mailpiler.sphinxTagIndex | quote }}
+            - name: MAILPILER_SPHINX_NOTE_INDEX
+              value: {{ .Values.mailpiler.sphinxNoteIndex | quote }}
+            - name: MAILPILER_SPHINX_AUDIT_INDEX
+              value: {{ .Values.mailpiler.sphinxAuditIndex | quote }}
             {{- $pathPrefix := include "mailpiler.pathPrefix" . }}
             {{- if $pathPrefix }}
             - name: PATH_PREFIX
@@ -84,10 +92,65 @@ spec:
             {{- with .Values.mailpiler.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.mailpiler.extraEnvFrom }}
+            {{- with .Values.mailpiler.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    (
+                      set -eu
+
+                      for i in $(seq 1 60); do
+                        if [ -f /etc/piler/config-site.php ] && [ -f /etc/piler/piler.conf ]; then
+                          break
+                        fi
+                        sleep 1
+                      done
+
+                      set_php_config() {
+                        key="$1"
+                        value="$2"
+                        file="/etc/piler/config-site.php"
+
+                        if [ ! -f "$file" ]; then
+                          return 0
+                        fi
+
+                        if grep -q "\$config\['${key}'\]" "$file"; then
+                          sed -i "s|\$config\['${key}'\] = .*;|\$config['${key}'] = '${value}';|" "$file"
+                        else
+                          printf "\$config['%s'] = '%s';\n" "$key" "$value" >> "$file"
+                        fi
+                      }
+
+                      set_ini_config() {
+                        key="$1"
+                        value="$2"
+                        file="/etc/piler/piler.conf"
+
+                        if [ ! -f "$file" ]; then
+                          return 0
+                        fi
+
+                        if grep -q "^${key}=" "$file"; then
+                          sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+                        else
+                          printf "%s=%s\n" "$key" "$value" >> "$file"
+                        fi
+                      }
+
+                      set_php_config SPHINX_MAIN_INDEX "$MAILPILER_SPHINX_MAIN_INDEX"
+                      set_php_config SPHINX_TAG_INDEX "$MAILPILER_SPHINX_TAG_INDEX"
+                      set_php_config SPHINX_NOTE_INDEX "$MAILPILER_SPHINX_NOTE_INDEX"
+                      set_php_config SPHINX_AUDIT_INDEX "$MAILPILER_SPHINX_AUDIT_INDEX"
+                      set_ini_config sphxdb "$MAILPILER_SPHINX_MAIN_INDEX"
+                    ) &
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

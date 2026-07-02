@@ -36,6 +36,13 @@ mailpiler:
   hostname: "archive.example.com"
   # Enable RT index (1/0).
   rtIndex: 1
+  # Manticore/Sphinx table names used by Mailpiler.
+  # Use cluster-qualified names (for example "manticore_cluster:piler1") when
+  # the Manticore worker stores the RT tables in a cluster.
+  sphinxMainIndex: "piler1"
+  sphinxTagIndex: "tag1"
+  sphinxNoteIndex: "note1"
+  sphinxAuditIndex: "audit1"
   # Optional URL path prefix if running under a subpath.
   # Trailing "/" is optional; the chart normalizes it automatically.
   pathPrefix: ""
