@@ -10,11 +10,11 @@ Verify the signature first (recommended): see `COSIGN.md`.
 
 ```bash
 # GHCR
-helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.2 \
+helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.3 \
   --set mailpiler.hostname=archive.example.com
 
 # Docker Hub
-helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.2 \
+helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.3 \
   --set mailpiler.hostname=archive.example.com
 ```
 

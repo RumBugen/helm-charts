@@ -11,10 +11,10 @@ This repository publishes Helm charts via:
 
 ```bash
 # GHCR
-helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.0
+helm install mailpiler oci://ghcr.io/rumbugen/mailpiler --version 0.1.3
 
 # Docker Hub
-helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.0
+helm install mailpiler oci://registry-1.docker.io/rumbugen/mailpiler --version 0.1.3
 ```
 
 ### GitHub Pages repo

@@ -2,7 +2,7 @@ apiVersion: v2
 name: mailpiler
 description: Mailpiler is a powerful, scalable email archiving platform that helps organizations comply with regulations, reduce storage costs, and improve email management. 
 type: application
-version: 0.1.2
+version: 0.1.3
 appVersion: "1.4.9"
 
 dependencies:
