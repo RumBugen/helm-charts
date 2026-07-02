@@ -3,6 +3,31 @@ entries:
   mailpiler:
   - apiVersion: v2
     appVersion: 1.4.9
+    created: "2026-07-02T09:41:37.659632498Z"
+    dependencies:
+    - condition: mariadb.enabled
+      name: mariadb
+      repository: oci://registry-1.docker.io/cloudpirates
+      version: 0.10.1
+    - condition: memcached.enabled
+      name: memcached
+      repository: oci://registry-1.docker.io/cloudpirates
+      version: 0.8.2
+    - condition: manticoresearch.enabled
+      name: manticoresearch
+      repository: https://manticoresoftware.github.io/manticoresearch-helm
+      version: 25.0.0
+    description: Mailpiler is a powerful, scalable email archiving platform that helps
+      organizations comply with regulations, reduce storage costs, and improve email
+      management.
+    digest: d8ecaa09fb47dfb10ef2af56b02750b2eaea86836fe794159e0f076715b1f202
+    name: mailpiler
+    type: application
+    urls:
+    - https://github.com/RumBugen/helm-charts/releases/download/mailpiler-0.1.3/mailpiler-0.1.3.tgz
+    version: 0.1.3
+  - apiVersion: v2
+    appVersion: 1.4.9
     created: "2026-06-17T14:50:25.111780598Z"
     dependencies:
     - condition: mariadb.enabled
@@ -51,4 +76,4 @@ entries:
     urls:
     - https://github.com/RumBugen/helm-charts/releases/download/mailpiler-0.1.1/mailpiler-0.1.1.tgz
     version: 0.1.1
-generated: "2026-06-17T14:50:25.111792305Z"
+generated: "2026-07-02T09:41:37.659649891Z"
